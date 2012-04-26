@@ -1,7 +1,7 @@
-/* File: qsort_queue.c (Karl Hiner for CS415)
-*
+/*
 * Quicksort algorithm (Sequential version)
-*
+* Author: Karl Hiner
+* CS415
 */
 
 #include <stdlib.h>
@@ -11,17 +11,25 @@
 
 #define MIN_SIZE 10
 
-struct task_node {
+pthread_mutex_t mutex, count_mutex;
+
+struct task_node
+{
     int low, high;
     struct task_node *next;
 };
 
-struct task_queue {
+struct task_queue
+{
     struct task_node *front, *rear;
 };
 
-// add node to the back of queue
-void add(struct task_queue *queue, struct task_node *node) {
+// add node to the back of queue.
+// since this function effects the global resource 'queue',
+// it is recommended to enforce as a critical section,
+// i.e. use mutex_lock before and mutex_unlock after
+void add(struct task_queue *queue, struct task_node *node)
+{
     if (isEmpty(queue)) {
         queue->front = node;
         queue->rear = node;
@@ -33,15 +41,21 @@ void add(struct task_queue *queue, struct task_node *node) {
 
 // remove and return the node at the front of the queue
 // returns NULL if the queue is empty
-struct task_node* delete(struct task_queue *queue) {
-    if (isEmpty(queue))
+// since this function effects the global resource 'queue',
+// it is recommended to enforce as a critical section,
+// i.e. use mutex_lock before and mutex_unlock after
+struct task_node* delete(struct task_queue *queue)
+{
+    if (isEmpty(queue)) {
         return NULL;
+    }
     struct task_node *front = queue->front;
     queue->front = front->next;
     return front;
 }
 
-int isEmpty(struct task_queue *queue) {
+int isEmpty(struct task_queue *queue)
+{    
     return (queue->front == NULL);
 }
 
@@ -100,7 +114,13 @@ void quicksort(int low, int high)
 {
     if (high - low < MIN_SIZE) {
         bubble_sort(low, high);
-        sortedCount += high - low;
+        
+        pthread_mutex_lock(&count_mutex);
+        // critical section - changing global variable 'sortedCount'
+        sortedCount += high - low + 2;
+        // end critical section
+        pthread_mutex_unlock(&count_mutex);
+        
         return;
     }
     int middle = partition(low, high);
@@ -109,23 +129,39 @@ void quicksort(int low, int high)
     struct task_node *new_node = (struct task_node *)malloc(sizeof(struct task_node));
     new_node->low = low;
     new_node->high = middle - 1;
+    
+    pthread_mutex_lock(&mutex);
+    // begin critical section - accessing global queue        
     add(queue, new_node);
+    // end critical section     
+    pthread_mutex_unlock(&mutex);
+    
     quicksort(middle+1, high);
 }
 
 /*
  * Every thread executes this routine, including ’main’ 
  */
-void worker(void *ptr)
+void worker(long rank)
 {
-    printf("starting thread");
-    int termination_condition = (isEmpty(queue) && sortedCount >= N);
-    while (!termination_condition) {
+#ifdef DEBUG
+    printf("Thread %ld starts ....\n", rank);
+#endif
+    while (!(isEmpty(queue) && sortedCount >= N)) {
+        
+        pthread_mutex_lock(&mutex);
+        // begin critical section - accessing global queue        
         struct task_node *node = delete(queue); // remove a task from the queue
+        // end critical section         
+        pthread_mutex_unlock(&mutex);
+        
         if (node != NULL) {
             quicksort(node->low, node->high);
         }
     }
+#ifdef DEBUG
+    printf("Thread %ld ends.\n", rank);
+#endif
 } 
 
 // A global array of size N contains the integers to be sorted,
@@ -155,11 +191,15 @@ int main(int argc, char **argv)
         printf ("No num_threads arg provided.  Defaulting to 1 thread.\n");
         num_threads = 1;
     }
+
+    // initialize mutexes
+    pthread_mutex_init(&mutex, NULL);
+    pthread_mutex_init(&count_mutex, NULL);    
     
     // create (num_threads-1) threads, each will execute the worker() routine;
     thread_array = (pthread_t *)malloc(sizeof(pthread_t)*(num_threads - 1));
-    for (i = 0; i < num_threads; i++)
-        pthread_create(&thread_array[i], NULL, (void *) &worker, /*DATA*/ NULL);
+    for (i = 0; i < num_threads - 1; i++)
+        pthread_create(&thread_array[i], NULL, (void *) &worker, /*DATA*/ (void *)i);
     
     // init an array with values 1. N-1
     array = (int *)malloc(sizeof(int) * N);
@@ -178,14 +218,19 @@ int main(int argc, char **argv)
     struct task_node *firstNode = (struct task_node *)malloc(sizeof(struct task_node));
     firstNode->low = 0;
     firstNode->high = N - 1;
+
+    pthread_mutex_lock(&mutex);
+    // begin critical section - accessing global queue    
     add(queue, firstNode);
-    
+    // end critical section    
+    pthread_mutex_unlock(&mutex);
+
     // execute worker(); // ’main’ is also a member of the thread pool
-    worker(NULL);
+    worker(num_threads - 1);
     
-    // wait for other threads to join; 
-    
-    quicksort(0, N-1);
+    // wait for other threads to join;
+    for (i = 0; i < num_threads; i++)
+        pthread_join(thread_array[i], NULL);
 
     /* Verify the result */
     for (i=0; i<N-1; i++) {

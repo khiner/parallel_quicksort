@@ -1,0 +1,6 @@
+To compile and run, use
+$ gcc -o qsort_queue qsort_queue.c -lpthread <-DDEBUG>
+$ ./qsort_queue
+
+where <-DDEBUG> is optionally included for verbose debuggin output.
+
