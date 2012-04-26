@@ -147,12 +147,12 @@ void worker(long rank)
 #ifdef DEBUG
     printf("Thread %ld starts ....\n", rank);
 #endif
-    while (!(isEmpty(queue) && sortedCount >= N)) {
-        
+    while (sortedCount < N || !isEmpty(queue)) {        
         pthread_mutex_lock(&mutex);
-        // begin critical section - accessing global queue        
-        struct task_node *node = delete(queue); // remove a task from the queue
-        // end critical section         
+        // begin critical section - accessing global queue
+        // remove the next task from the queue
+        struct task_node *node = delete(queue);
+        // end critical section
         pthread_mutex_unlock(&mutex);
         
         if (node != NULL) {
@@ -167,7 +167,6 @@ void worker(long rank)
 // A global array of size N contains the integers to be sorted,
 // using <num_threads> threads
 // global task queue is initialized with the given sort range [0,N-1].
-
 int main(int argc, char **argv)
 {
     int num_threads, i, j;
@@ -175,7 +174,7 @@ int main(int argc, char **argv)
     
     /* check command line first */
     if (argc < 2) {
-        printf ("Usage : qsort_seq <array_size> <num_threads: default=1>\n");
+        printf("Usage : qsort_seq <array_size> <num_threads: default=1>\n");
         exit(0);
     }
     if ((N=atoi(argv[1])) < 2) {
@@ -184,23 +183,18 @@ int main(int argc, char **argv)
     }
     if (argc >= 3) {
         if ((num_threads=atoi(argv[2])) < 1) {
-            printf ("<num_threads> must be greater or equal to 1\n");
+            printf("<num_threads> must be greater or equal to 1\n");
             exit(0);
         }
     } else {
-        printf ("No num_threads arg provided.  Defaulting to 1 thread.\n");
+        printf("No num_threads arg provided.  Defaulting to 1 thread.\n");
         num_threads = 1;
     }
 
     // initialize mutexes
     pthread_mutex_init(&mutex, NULL);
     pthread_mutex_init(&count_mutex, NULL);    
-    
-    // create (num_threads-1) threads, each will execute the worker() routine;
-    thread_array = (pthread_t *)malloc(sizeof(pthread_t)*(num_threads - 1));
-    for (i = 0; i < num_threads - 1; i++)
-        pthread_create(&thread_array[i], NULL, (void *) &worker, /*DATA*/ (void *)i);
-    
+
     // init an array with values 1. N-1
     array = (int *)malloc(sizeof(int) * N);
     for (i = 0; i < N; i++)
@@ -213,19 +207,22 @@ int main(int argc, char **argv)
         swap(i, j);
     }
 
-    // init task queue
+    // init task queue with initial task node of 0-(N-1)
     queue = (struct task_queue *)malloc(sizeof(struct task_queue));
     struct task_node *firstNode = (struct task_node *)malloc(sizeof(struct task_node));
     firstNode->low = 0;
     firstNode->high = N - 1;
 
-    pthread_mutex_lock(&mutex);
-    // begin critical section - accessing global queue    
+    // only main thread so far.  no need to lock.
     add(queue, firstNode);
-    // end critical section    
-    pthread_mutex_unlock(&mutex);
-
-    // execute worker(); // ’main’ is also a member of the thread pool
+    
+    // create (num_threads-1) threads, each will execute the worker() routine;
+    thread_array = (pthread_t *)malloc(sizeof(pthread_t)*(num_threads - 1));
+    for (i = 0; i < num_threads - 1; i++)
+        pthread_create(&thread_array[i], NULL, (void *) &worker, /*THREAD_NUM*/ (void *)i);
+    
+    // execute worker() - ’main’ is also a member of the thread pool
+    // last thread, so thread_num == num_threads - 1
     worker(num_threads - 1);
     
     // wait for other threads to join;
