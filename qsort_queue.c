@@ -158,10 +158,10 @@ void worker(long rank)
         if (node != NULL) {
             quicksort(node->low, node->high);
         }
-    }
 #ifdef DEBUG
-    printf("Thread %ld ends.\n", rank);
-#endif
+        printf("%ld.", rank);
+#endif        
+    }
 } 
 
 // A global array of size N contains the integers to be sorted,
@@ -237,5 +237,5 @@ int main(int argc, char **argv)
             return;
         }
     }
-    printf("Sorting result verified!\n");
+    printf("\nSorting result verified!\n");
 }
