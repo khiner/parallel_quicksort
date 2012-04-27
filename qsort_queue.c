@@ -8,10 +8,12 @@
 #include <stdio.h>
 #include <time.h>
 #include <pthread.h>
+#include <semaphore.h>
 
 #define MIN_SIZE 10
 
 pthread_mutex_t mutex, count_mutex;
+// sem_t queue_sem;
 
 struct task_node
 {
@@ -62,7 +64,7 @@ int isEmpty(struct task_queue *queue)
 struct task_queue *queue;
 
 int N;
-int sortedCount = 0;
+int sortedCount = -1;
 
 int *array = NULL;
 pthread_t *thread_array = NULL;
@@ -115,10 +117,10 @@ void quicksort(int low, int high)
     if (high - low < MIN_SIZE) {
         bubble_sort(low, high);
         
+        // critical section - increasing global var sortedCount
         pthread_mutex_lock(&count_mutex);
-        // critical section - changing global variable 'sortedCount'
-        sortedCount += high - low + 2;
-        // end critical section
+        // +1 for partition
+        sortedCount += high - low + 2;        
         pthread_mutex_unlock(&count_mutex);
         
         return;
@@ -130,11 +132,12 @@ void quicksort(int low, int high)
     new_node->low = low;
     new_node->high = middle - 1;
     
-    pthread_mutex_lock(&mutex);
-    // begin critical section - accessing global queue        
+    // critical section - adding task to global queue
+    pthread_mutex_lock(&mutex);    
     add(queue, new_node);
-    // end critical section     
-    pthread_mutex_unlock(&mutex);
+    // increment semaphore to wake up waiting threads
+    // sem_post(&queue_sem);        
+    pthread_mutex_unlock(&mutex);    
     
     quicksort(middle+1, high);
 }
@@ -147,20 +150,22 @@ void worker(long rank)
 #ifdef DEBUG
     printf("Thread %ld starts ....\n", rank);
 #endif
-    while (sortedCount < N || !isEmpty(queue)) {        
+    while (sortedCount < N || !isEmpty(queue)) {
+        // wait for the queue to be non-empty
+        // sem_wait(&queue_sem);        
+
+        // critical section - removing task from global queue
         pthread_mutex_lock(&mutex);
-        // begin critical section - accessing global queue
-        // remove the next task from the queue
-        struct task_node *node = delete(queue);
-        // end critical section
+        struct task_node *node = delete(queue);        
         pthread_mutex_unlock(&mutex);
-        
+
         if (node != NULL) {
-            quicksort(node->low, node->high);
+             quicksort(node->low, node->high);
         }
+        
 #ifdef DEBUG
         printf("%ld.", rank);
-#endif        
+#endif
     }
 } 
 
@@ -191,9 +196,11 @@ int main(int argc, char **argv)
         num_threads = 1;
     }
 
-    // initialize mutexes
+    // initialize mutexes and semaphore
     pthread_mutex_init(&mutex, NULL);
-    pthread_mutex_init(&count_mutex, NULL);    
+    pthread_mutex_init(&count_mutex, NULL);
+    // init semaphore to 0, since no tasks are in the queue to start
+    // sem_init(&queue_sem, 0, 0);
 
     // init an array with values 1. N-1
     array = (int *)malloc(sizeof(int) * N);
@@ -216,8 +223,11 @@ int main(int argc, char **argv)
     // only main thread so far.  no need to lock.
     add(queue, firstNode);
     
+    // increment semaphore to wake up waiting threads
+    // sem_post(&queue_sem);    
+    
     // create (num_threads-1) threads, each will execute the worker() routine;
-    thread_array = (pthread_t *)malloc(sizeof(pthread_t)*(num_threads - 1));
+    thread_array = (pthread_t *)malloc(sizeof(pthread_t)*(num_threads));
     for (i = 0; i < num_threads - 1; i++)
         pthread_create(&thread_array[i], NULL, (void *) &worker, /*THREAD_NUM*/ (void *)i);
     
@@ -237,5 +247,5 @@ int main(int argc, char **argv)
             return;
         }
     }
-    printf("\nSorting result verified!\n");
+    printf("\nSorting result verified! (cnt = %d)\n", sortedCount);
 }
